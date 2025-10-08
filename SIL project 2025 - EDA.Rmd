@@ -1,0 +1,1193 @@
+---
+title: "SIL project"
+author: "Federica Andreazza"
+date: "May 2025"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: spacelab
+  word_document:
+    toc: true
+  pdf_document:
+    toc: true
+subtitle: EDA
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This report provides an exploratory data analysis (EDA) of the **Healthcare Survey dataset** from Kaggle.  
+The objective is to understand the data structure, clean and recode variables, and identify patterns or issues relevant to predicting **mood disorders**.
+
+# HEALTH DATASET
+https://www.kaggle.com/datasets/aradhanahirapara/healthcare-survey/data?select=Data_dictionary.txt
+
+
+BRIEF DESCRIPTION OF THE COLUMNS 
+
+| Column Name                     | Description |
+|---------------------------------|-------------|
+| ADM_RNO1                        | Unique administrative record number |
+| Province                        | Province where the respondent resides (see encoding guide below) |
+| Health_region_grouped           | Grouped health region of residence |
+| Gender                          | Respondent's gender |
+| Marital_status                  | Current marital status |
+| Household                       | Type of household composition |
+| Age                             | Age of respondent (years) |
+| Worked_job_business             | Whether the respondent worked at a job or business in the past 12 months |
+| Edu_level                       | Highest level of education attained |
+| Gen_health_state                | General health self-assessment |
+| Life_satisfaction               | Self-rated life satisfaction |
+| Mental_health_state             | Self-rated mental health status |
+| Stress_level                    | Perceived stress level in daily life |
+| Work_stress                     | Stress experienced at work |
+| Sense_belonging                 | Sense of belonging to community |
+| Weight_state                    | Weight status based on BMI categories |
+| BMI_12_17                       | Body Mass Index for respondents aged 12-17 |
+| BMI_18_above                    | Body Mass Index for respondents aged 18 and above |
+| Sleep_apnea                     | Diagnosed with sleep apnea (yes/no) |
+| High_BP                         | Diagnosed with high blood pressure (yes/no) |
+| High_cholesterol                | Diagnosed with high cholesterol (yes/no) |
+| Diabetic                        | Diagnosed with diabetes (yes/no) |
+| Fatigue_syndrome                | Diagnosed with chronic fatigue syndrome (yes/no) |
+| Mood_disorder                   | Diagnosed with a mood disorder (yes/no) |
+| Anxiety_disorder                | Diagnosed with an anxiety disorder (yes/no) |
+| Respiratory_chronic_con         | Diagnosed with chronic respiratory condition (yes/no) |
+| Musculoskeletal_con             | Diagnosed with musculoskeletal condition (yes/no) |
+| Cardiovascular_con              | Diagnosed with cardiovascular condition (yes/no) |
+| Health_utility_index            | Health Utility Index score |
+| Pain_status                     | Frequency and severity of pain |
+| Act_improve_health              | Engaged in activities to improve health |
+| Fruit_veg_con                   | Daily consumption of fruits and vegetables |
+| Smoked                          | Smoking status |
+| Tobacco_use                     | Tobacco product consumption |
+| Weekly_alcohol                  | Frequency of alcohol consumption per week |
+| Cannabis_use                    | Cannabis use in the past 12 months |
+| Drug_use                        | Illicit drug use in the past 12 months |
+| Total_active_time               | Total time spent on physical activities |
+| Total_physical_act_time         | Total duration of physical activities per week| 
+| Other_physical_act_time         | Time spent on other physical activities |
+| Physical_vigorous_act_time      | Time spent on vigorous physical activity |
+| Work_hours                      | Number of hours worked per week |
+| Working_status                  | Employment status (employed, unemployed, retired, etc.) |
+| Aboriginal_identity             | Whether the respondent identifies as Aboriginal |
+| Birth_country                   | Country of birth |
+| Immigrant                       | Immigration status |
+| Insurance_cover                 | Type of health insurance coverage |
+| Food_security                   | Household food security status |
+| Income_source                   | Primary source of income |
+| Total_income                    | Total annual income |
+
+
+```{r}
+health_df <- read.csv(path)
+nrow(health_df)
+ncol(health_df)
+```
+Our dataset contains **108252 observations** and **50 variables**.  
+The first 5 observations of the dataset:
+```{r}
+head(health_df, 5)
+```
+
+
+```{r}
+summary(health_df)
+```
+
+
+
+# Data encoding and visualization
+
+## **TARGET**
+- **Mood_disorder**:
+This is our target variable. It indicates whether a person has a mood disorder such as depression, bipolar disorder, mania or dysthymia.  
+Documentation: 1 =Yes, 2 = No, 7 = Don’t know, 8 = Refusal.  
+I'll treat '7' and '8' as NaN.  
+Since it's a categorical variable, I have to transform it into a **factor**.
+```{r}
+health_df$Mood_disorder <- factor(health_df$Mood_disorder,
+                                  levels = c(2, 1),
+                                  labels = c("No", "Yes"))
+
+summary(health_df$Mood_disorder)
+```
+
+
+```{r}
+ggplot(health_df, aes(x = Mood_disorder, fill = Mood_disorder)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                y = (..count..)/sum(..count..)),
+            stat = "count", vjust = -0.5, size = 4) +
+  labs(title = "Distribution of Mood Disorder",
+       x = "Mood Disorder Status",
+       y = "Count of Individuals") +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal() +
+
+  scale_fill_manual(values = c("No" = "purple", "Yes" = "orange"))
+```
+
+
+This is an auxiliar funtion that plots the distribution of Mood_disorder with respect to the other variables in the dataset.
+```{r}
+library(ggplot2) 
+plot_Mood_disorder_distribution <- function(data, varname, var_labels) {
+  data[[varname]] <- factor(data[[varname]])
+  ggplot(data, aes_string(x = varname, fill = "factor(Mood_disorder)")) +
+    geom_bar(position = "dodge") +
+    labs(x = varname, y = "Count", fill = "Mood Disorder") +
+    scale_x_discrete(labels = var_labels) +
+    scale_fill_discrete(labels = c("0" = "Yes", "1" = "No"))
+}
+```
+
+---------------------------------------------
+
+Now, I'll start to look deeper at each other variable present in the dataset.  
+Mostly are categorical variable, so I'll transform them into a **factor** as well.  
+
+## Demographic Information
+
+- ADM_RNO1: This column is stated as "not encoded". It's a unique identifier and doesn't carry meaning, so I'll exclude it from my logistic regression model. 
+
+- Province: The documentation says that the coding of this column "does not add any deeper insights into the data". So I'll exclude it.
+
+- Health_region_grouped: This variable represents health regions. Given the large number of regions, I might need to group them further or exclude this variable to avoid too many dimensions. I'll first train the model without it, then I'll take in consideration the one-hot-encoding to see if it improves the model.
+
+```{r}
+health_df = subset(health_df, select = -c(ADM_RNO1, Province, Health_region_.grouped))
+```
+
+
+- Gender: 
+Documentation: 1 = Male, 2 = Female, 9 = Not stated.
+  
+```{r}
+gender_labels <- c("1" = "Male", "2" = "Female", "9" = "Not stated")
+plot_Mood_disorder_distribution(health_df, "Gender", var_labels = gender_labels)
+```
+
+Values '9' are not present.
+
+```{r}
+health_df$Gender <- factor(health_df$Gender,
+                                  levels = c(1, 2),
+                                  labels = c("Male", "Female"))
+summary(health_df$Gender)
+```
+
+- Marital_status:
+Documentation: 1 = Married/Common-law, 2 = Widowed/Divorced/Separated/Single, 3 = Valid skip, 9 = Not stated.  
+I'll treat 9 as NaN.
+
+```{r}
+Marital_status_labels <- c("1" = "Married", "2" = "Single", "6" = "Valid skip", "9" = "Not stated")
+plot_Mood_disorder_distribution(health_df, "Marital_status", var_labels = Marital_status_labels)
+```
+
+The code '6' is not reported in the documentation for this category. However, many of other variables take the value '6' if is reported a 'valid skip'. Thus, i'll treat the '6' as 'valid skip' also for this category.  
+  
+```{r}
+health_df$Marital_status[health_df$Marital_status %in% c(6, 9)] <- NA
+
+health_df$Marital_status <- factor(health_df$Marital_status,
+                                  levels = c(1, 2),
+                                  labels = c("Married", "Single"))
+
+
+summary(health_df$Marital_status)
+```
+
+- Household:
+Documentation: 1 = Lives alone, 2 = Household size 2 or more, 9 = Not stated.  
+As per Martial_status, I'll treat '9' as NaN.
+  
+```{r}
+Household_labels <- c("1" = "Live Alone", "2" = "Household", "9" = "Not stated")
+plot_Mood_disorder_distribution(health_df, "Household", var_labels = Household_labels)
+```
+
+
+```{r}
+health_df$Household[health_df$Household %in% c(9)] <- NA
+
+health_df$Household <- factor(health_df$Household,
+                                  levels = c(1, 2),
+                                  labels = c("Live Alone", "Household"))
+summary(health_df$Household)
+```
+
+- Age:
+Documentation: 1 = 12 to 17 years, 2 = 18 to 34 years, 3 = 35 to 49 years, 4 = 50 to 64 years, 5 = 65 and older.
+
+```{r}
+Age_labels <- c("1" = "12-17 yr", "2" = "18-34 yr", "3" = "35-49 yr", "4" = "50-64 yr", "5" = "65+")
+plot_Mood_disorder_distribution(health_df, "Age", var_labels = Age_labels)
+```
+
+
+```{r}
+health_df$Age <- factor(health_df$Age,
+                                  levels = c(1, 2, 3, 4, 5),
+                                  labels = c("12-17 yr", "18-34 yr", "35-49 yr", "50-64 yr", "65+"))
+summary(health_df$Age)
+```
+
+- Aboriginal_identity:
+Indicates whether the respondent identifies as an Aboriginal person, specifically belonging to one of the following groups: First Nations (including both Status and Non-Status Indians), Métis, or Inuk (Inuit).  
+Documentation: 1 = Yes, 2 = No, 7 = Don't know, 8 = Refusal, 9 = Not stated.
+```{r}
+Aboriginal_identity_labels <- c(
+  "1" = "Yes", "2" = "No", "7" = "Don't know", "8" = "Refusal", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Aboriginal_identity", var_labels = Aboriginal_identity_labels )
+```
+
+```{r}
+health_df$Aboriginal_identity[health_df$Aboriginal_identity %in% c(7, 8, 9)] <- NA
+
+health_df$Aboriginal_identity <- factor(health_df$Aboriginal_identity,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+summary(health_df$Aboriginal_identity)
+```
+
+- Birth_country:
+This says if a person was born in Canada or elsewhere.
+```{r}
+Birth_country_labels <- c(
+  "1" = "Canada", "2" = "Other", "3" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Birth_country", var_labels = Birth_country_labels )
+```
+
+```{r}
+health_df$Birth_country[health_df$Birth_country %in% c(9)] <- NA
+
+health_df$Birth_country <- factor(health_df$Birth_country,
+  levels = c(1, 2),
+  labels = c("Canada", "Other")
+)
+summary(health_df$Birth_country)
+```
+
+
+- Immigrant:
+Whether someone is an immigrant or not.
+```{r}
+Immigrant_labels <- c(
+  "1" = "Immigrant", "2" = "Non-immigrant", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Immigrant", var_labels = Immigrant_labels )
+```
+
+```{r}
+health_df$Immigrant[health_df$Immigrant %in% c(9)] <- NA
+
+health_df$Immigrant <- factor(health_df$Immigrant,
+                        levels = c(1, 2),
+                        labels = c("Immigrant", "Non-immigrant"))
+
+summary(health_df$Immigrant)
+```
+
+
+## Socioeconomic Status
+
+- Worked_job_business:
+Indicates whether the respondent has worked at a job or business at any time during the past 12 months.  
+Documentation: 1 = Yes, 2 = No, 6 = Valid skip, 7 = Don’t know, 8 = Refusal, 9 = Not stated.
+
+```{r}
+Worked_job_business_labels <- c("1" = "Yes", "2" = "No", "6" = "Valid skip", "7" = "Don't know", "8" = "Refusal", "9" = "Not stated")
+plot_Mood_disorder_distribution(health_df, "Worked_job_business", var_labels = Worked_job_business_labels)
+```
+
+I'll treat 7 ("Don't know"), 8 ("Refusal"), and 9 ("Not stated") as NaN.  
+
+There are lots of mood_disorder's values in "Valid skip". However, since it should not be a relevant answer, and considering that these values referred to people that has answered to other questions in a more relevant way, I'll discard these values by setting them to NaN. 
+
+```{r}
+health_df$Worked_job_business[health_df$Worked_job_business %in% c(6, 7, 8, 9)] <- NA
+
+health_df$Worked_job_business <- factor(health_df$Worked_job_business,
+                                  levels = c(1, 2),
+                                  labels = c("Did work", "Didn't work"))
+summary(health_df$Worked_job_business)
+```
+
+- Edu_level:
+Documentation: 1 = Less than secondary school, 2 = Secondary school, 3 = Post-secondary, 9 = Not stated.
+  
+```{r}
+Edu_level_labels <- c("1" = "<secondary school", "2" = "Secondary school", "3" = "Post-secondary", "9" = "Not stated")
+plot_Mood_disorder_distribution(health_df, "Edu_level", var_labels = Edu_level_labels)
+```
+
+Here I'll treat '9' as NaN as well.
+
+```{r}
+health_df$Edu_level[health_df$Edu_level == 9] <- NA
+
+health_df$Edu_level <- factor(health_df$Edu_level,
+                                  levels = c(1, 2, 3),
+                                  labels = c("<secondary school", "Secondary school", "Post-secondary"))
+
+```
+
+
+- working_status:
+For this the respondents are of age 18 to 64.  
+This says if a person works full-time / part-time (for total usual hours).
+```{r}
+working_status_labels <- c(
+  "1" = "Full-time", "2" = "Part-time", "6" = "Valid skip", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "working_status", var_labels = working_status_labels )
+```
+
+```{r}
+health_df$working_status[health_df$working_status %in% c(6, 9)] <- NA
+
+health_df$working_status <- factor(health_df$working_status,
+  levels = c(1, 2),
+  labels = c("Full-time", "Part-time")
+)
+summary(health_df$working_status)
+```
+
+
+- Insurance_cover:
+Whether a person has an health insurance coverage or not.
+```{r}
+Insurance_cover_labels <- c(
+  "1" = "Yes", "2" = "No", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Insurance_cover", var_labels = Insurance_cover_labels )
+```
+
+```{r}
+health_df$Insurance_cover[health_df$Insurance_cover %in% c(9)] <- NA
+
+health_df$Insurance_cover <- factor(health_df$Insurance_cover,
+                        levels = c(1, 2),
+                        labels = c("Yes", "No"))
+
+summary(health_df$Insurance_cover)
+```
+
+
+
+- Food_security:
+This is also an adult status (including marginally), and tells how much a person is food secure.
+```{r, fig.width=8}
+Food_security_labels <- c(
+  "0" = "Food secure", "1" = "Marginally insecure", "2" = "Moderately insecure",
+  "3" = "Severely insecure", "6" = "Valid skip", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Food_security", var_labels = Food_security_labels)
+```
+
+```{r}
+health_df$Food_security[health_df$Food_security %in% c(6,9)] <- NA
+
+health_df$Food_security <- factor(health_df$Food_security,
+  levels = c(0, 1, 2, 3),
+  labels = c("Food secure", "Marginally insecure", "Moderately insecure", "Severely insecure")
+)
+summary(health_df$Food_security)
+```
+
+- Income_source:
+Main source of total household income, grouped into categories such as wages/self-employment income, or other sources.
+```{r}
+Income_source_labels <- c(
+  "1" = "Wages/self-employment", "2" = "Other", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Income_source", var_labels = Income_source_labels)
+```
+
+```{r}
+health_df$Income_source[health_df$Income_source %in% c(9)] <- NA
+
+health_df$Income_source <- factor(health_df$Income_source,
+  levels = c(1, 2),
+  labels = c("Wages/self-employment", "Other")
+)
+summary(health_df$Income_source)
+```
+
+
+- Total_income:
+
+```{r}
+Total_income_labels <- c(
+  "1" = "<$20K", "2" = "$20-40K", "3" = "$40-60K",
+  "4" = "$60-80K", "5" = ">$80K", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Total_income", var_labels = Total_income_labels)
+```
+
+```{r}
+health_df$Total_income[health_df$Total_income %in% c(9)] <- NA
+
+health_df$Total_income <- factor(health_df$Total_income,
+  levels = c(1, 2, 3, 4, 5),
+  labels = c("<$20K", "$20-40K", "$40-60K", "$60-80K", ">$80K")
+)
+summary(health_df$Total_income)
+```
+
+
+
+## Health Status & Conditions
+
+- Gen_health_state:
+This indicates the perceived health of a person.
+
+```{r}
+Gen_health_state_labels <- c("1" = "Excellent", "2" = "Very good", "3" = "Good", "4" = "Fair", "5" = "Poor", "6" = "Don't know", "9" = "Refusal")
+plot_Mood_disorder_distribution(health_df, "Gen_health_state", var_labels = Gen_health_state_labels)
+```
+
+```{r}
+health_df$Gen_health_state[health_df$Gen_health_state %in% c(7, 8)] <- NA
+
+health_df$Gen_health_state <- factor(health_df$Gen_health_state,
+  levels = 1:5,
+  labels = c("Excellent", "Very good", "Good", "Fair", "Poor"))
+
+```
+
+
+- Mental_health_state:
+This indicates the perceived mental health of a person.
+
+```{r}
+Mental_health_state_labels <- c("1" = "Excellent", "2" = "Very good", "3" = "Good", "4" = "Fair", "5" = "Poor", "7" = "Don't know", "8" = "Refusal", "9" = "Not stated")
+plot_Mood_disorder_distribution(health_df, "Mental_health_state", var_labels = Mental_health_state_labels)
+```
+
+```{r}
+health_df$Mental_health_state[health_df$Mental_health_state %in% c(7, 8, 9)] <- NA
+
+health_df$Mental_health_state <- factor(health_df$Mental_health_state,
+  levels = 1:5,
+  labels = c("Excellent", "Very good", "Good", "Fair", "Poor"))
+
+```
+
+- Stress_level:
+Perceived life stress, reflecting the respondent’s subjective appraisal of how stressful their life is.
+
+```{r}
+Stress_level_labels <- c("1" = "Not at all", "2" = "Not very", "3" = "A bit", "4" = "Quite a bit", "5" = "Extremely", "7" = "Don't know", "8" = "Refusal")
+plot_Mood_disorder_distribution(health_df, "Stress_level", var_labels = Stress_level_labels)
+```
+
+```{r}
+health_df$Stress_level[health_df$Stress_level %in% c(7, 8)] <- NA
+
+health_df$Stress_level <- factor(health_df$Stress_level,
+  levels = 1:5,
+  labels = c("Not at all", "Not very", "A bit", "Quite a bit", "Extremely"))
+```
+  
+  
+- Work_stress:
+This indicates the perceived work stress.
+  
+```{r}
+Work_stress_labels <- c("1" = "Not at all", "2" = "Not very", "3" = "A bit", "4" = "Quite a bit", "5" = "Extremely", "6" = "Valid skip", "7" = "Don't know", "8" = "Refusal", "9" = "Not stated")
+plot_Mood_disorder_distribution(health_df, "Work_stress", var_labels = Work_stress_labels)
+```
+
+```{r}
+health_df$Work_stress[health_df$Work_stress %in% c(6, 7, 8, 9)] <- NA
+
+health_df$Work_stress <- factor(health_df$Work_stress,
+  levels = 1:5,
+  labels = c("Not at all", "Not very", "A bit", "Quite a bit", "Extremely"))
+
+plot_Mood_disorder_distribution(health_df, "Work_stress", var_labels = Work_stress_labels)
+```
+
+
+- Anxiety_disorder:
+Indicates whether a person has an anxiety disorder such as phobia, obsessive-compulsive disorder (OCD) or a panic disorder.
+```{r}
+Anxiety_disorder_labels <- c(
+  "1" = "Yes", "2" = "No", "7" = "Don't know", "8" = "Refusal"
+)
+plot_Mood_disorder_distribution(health_df, "Anxiety_disorder", var_labels = Anxiety_disorder_labels)
+```
+
+```{r}
+health_df$Anxiety_disorder[health_df$Anxiety_disorder %in% c(7, 8)] <- NA
+
+health_df$Anxiety_disorder <- factor(health_df$Anxiety_disorder,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+
+summary(health_df$Anxiety_disorder)
+```
+
+- Sleep_apnea:
+Indicates whether the respondent has been diagnosed with sleep apnea.
+```{r}
+Sleep_apnea_labels <- c(
+  "1" = "Yes", "2" = "No", "7" = "Don't know", "8" = "Refusal"
+)
+plot_Mood_disorder_distribution(health_df, "Sleep_apnea", var_labels = Sleep_apnea_labels)
+```
+
+```{r}
+health_df$Sleep_apnea[health_df$Sleep_apnea %in% c(7, 8)] <- NA
+
+health_df$Sleep_apnea <- factor(health_df$Sleep_apnea,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+summary(health_df$Sleep_apnea)
+```
+
+
+- High_BP:
+Indicates whether the respondent has high blood pressure and has taken medication for it within the past month.
+```{r}
+High_BP_labels <- c(
+  "1" = "Yes", "2" = "No", "7" = "Don't know", "8" = "Refusal"
+)
+plot_Mood_disorder_distribution(health_df, "High_BP", var_labels = High_BP_labels)
+```
+
+```{r}
+health_df$High_BP[health_df$High_BP %in% c(7, 8)] <- NA
+
+health_df$High_BP <- factor(health_df$High_BP,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+summary(health_df$High_BP)
+```
+
+
+- High_cholestrol:
+Indicates whether the respondent has high blood cholesterol or lipid levels and has taken medication for it within the past month.
+```{r}
+High_cholesterol_labels <- c(
+  "1" = "Yes", "2" = "No", "6" = "Valid skip", "7" = "Don't know", "8" = "Refusal"
+)
+plot_Mood_disorder_distribution(health_df, "High_cholestrol", var_labels = High_cholesterol_labels)
+```
+
+```{r}
+health_df$High_cholestrol[health_df$High_cholestrol %in% c(6, 7, 8)] <- NA
+
+health_df$High_cholestrol <- factor(health_df$High_cholestrol,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+summary(health_df$High_cholestrol)
+```
+
+- Diabetic:
+Indicates whether a person has diabets.
+```{r}
+Diabetic_labels <- c(
+  "1" = "Yes", "2" = "No", "6" = "Valid skip", "7" = "Don't know", "8" = "Refusal"
+)
+plot_Mood_disorder_distribution(health_df, "Diabetic", var_labels = Diabetic_labels)
+```
+
+```{r}
+health_df$Diabetic[health_df$Diabetic %in% c(6, 7, 8)] <- NA
+
+health_df$Diabetic <- factor(health_df$Diabetic,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+summary(health_df$Diabetic)
+```
+
+
+- Fatigue_syndrome:
+Indicates whether a person has chronic fatigue syndrome.
+```{r}
+Fatigue_syndrome_labels <- c(
+  "1" = "Yes", "2" = "No", "7" = "Don't know", "8" = "Refusal"
+)
+plot_Mood_disorder_distribution(health_df, "Fatigue_syndrome", var_labels = Fatigue_syndrome_labels)
+```
+
+
+```{r}
+health_df$Fatigue_syndrome[health_df$Fatigue_syndrome %in% c(7, 8)] <- NA
+
+health_df$Fatigue_syndrome <- factor(health_df$Fatigue_syndrome,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+summary(health_df$Fatigue_syndrome)
+```
+
+
+- Respiratory_chronic_con:
+Indicates whether a person has respiratory chronic condition such as asthma or chronic obstructive pulmonary disease (COPD).
+```{r}
+Respiratory_chronic_con_labels <- c(
+  "1" = "Yes", "2" = "No", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Respiratory_chronic_con", var_labels = Respiratory_chronic_con_labels)
+```
+
+```{r}
+health_df$Respiratory_chronic_con[health_df$Respiratory_chronic_con %in% c(9)] <- NA
+
+health_df$Respiratory_chronic_con <- factor(health_df$Respiratory_chronic_con,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+summary(health_df$Respiratory_chronic_con)
+```
+
+
+- Musculoskeletal_con:
+Indicates whether a person has musculoskeletal condition such as arthritis, fibromyalgia or osteoporosis.
+```{r}
+Musculoskeletal_con_labels <- c(
+  "1" = "Yes", "2" = "No", "6" = "Valid skip", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Musculoskeletal_con", var_labels = Musculoskeletal_con_labels)
+```
+
+
+```{r}
+health_df$Musculoskeletal_con[health_df$Musculoskeletal_con %in% c(6, 9)] <- NA
+
+health_df$Musculoskeletal_con <- factor(health_df$Musculoskeletal_con,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+
+summary(health_df$Musculoskeletal_con)
+```
+
+
+- Cardiovascular_con:
+Indicates whether a person has a cardiovascular condition such as heart disease or stroke.
+```{r}
+Cardiovascular_con_labels <- c(
+  "1" = "Yes", "2" = "No", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Cardiovascular_con", var_labels = Cardiovascular_con_labels)
+```
+
+
+```{r}
+health_df$Cardiovascular_con[health_df$Cardiovascular_con %in% c(9)] <- NA
+
+health_df$Cardiovascular_con <- factor(health_df$Cardiovascular_con,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+
+summary(health_df$Cardiovascular_con)
+```
+
+- Pain_status:
+Indicates the levels of pain that a person self-report.
+```{r}
+Pain_status_labels <- c(
+  "1" = "No usual pain", "2" = "Usual pain", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Pain_status", var_labels = Pain_status_labels)
+```
+
+```{r}
+health_df$Pain_status[health_df$Pain_status %in% c(9)] <- NA
+
+health_df$Pain_status <- factor(health_df$Pain_status,
+                                  levels = c(1, 2),
+                                  labels = c("No pain", "Pain"))
+summary(health_df$Pain_status)
+```
+
+
+## Lifestyle & Behaviors
+
+- Life_satisfaction:
+It indicates the satisfaction with life in general, measured on a scale from 0 to 10.
+```{r}
+Life_satisfaction_labels <- c("99" = "Not stated", "97" = "Don't know", "98" = "Refusal")
+plot_Mood_disorder_distribution(health_df, "Life_satisfaction", var_labels = Life_satisfaction_labels)
+```
+
+```{r}
+health_df$Life_satisfaction[health_df$Life_satisfaction %in% c(97, 98, 99)] <- NA
+hist(health_df$Life_satisfaction, na.rm = TRUE)
+```
+
+```{r}
+health_df$Life_satisfaction_ord <- factor(health_df$Life_satisfaction, ordered = TRUE)
+```
+I'll treat this as an ordinal variable because it represents a discrete satisfaction scale ranging from 0 to 10, where the order of values reflects increasing levels of satisfaction.
+```{r}
+health_df$Life_satisfaction_ord <- factor(health_df$Life_satisfaction, ordered = TRUE)
+```
+
+
+  
+- Sense_belonging:
+Measures the respondent’s perceived sense of belonging to their local community. 
+  
+```{r}
+Sense_belonging_labels <- c("1" = "Very strong", "2" = "~strong", "3" = "~weak", "4" = "Very weak", "7" = "Don't know", "8" = "Refusal", "9" = "Not stated")
+plot_Mood_disorder_distribution(health_df, "Sense_belonging", var_labels = Sense_belonging_labels)
+```
+
+```{r}
+health_df$Sense_belonging[health_df$Sense_belonging %in% c(7, 8, 9)] <- NA
+
+health_df$Sense_belonging <- factor(health_df$Sense_belonging,
+  levels = 1:4,
+  labels = c("Very strong", "~strong", "~weak", "Very weak"))
+```
+ 
+
+- Act_improve_health:
+Indicates whether the respondent took any actions to improve their health in the past 12 months.
+```{r}
+Act_improve_health_labels <- c(
+  "1" = "Yes", "2" = "No", "6" = "Valid skip", "7" = "Don't know", "8" = "Refusal"
+)
+plot_Mood_disorder_distribution(health_df, "Act_improve_health", var_labels = Act_improve_health_labels)
+```
+
+```{r}
+health_df$Act_improve_health[health_df$Act_improve_health %in% c(6, 7, 8, 9)] <- NA
+
+health_df$Act_improve_health <- factor(health_df$Act_improve_health,
+                                  levels = c(1, 2),
+                                  labels = c("Yes", "No"))
+
+plot_Mood_disorder_distribution(health_df, "Act_improve_health", var_labels = Act_improve_health_labels)
+
+# summary(health_df$Act_improve_health)
+```
+
+
+- Fruit_veg_con:
+Grouping of total daily consumption of fruits and vegetables.
+```{r}
+Fruit_veg_con_labels <- c(
+  "1" = "<5/day", "2" = "5-10/day", "3" = ">10/day",
+  "6" = "Valid skip", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Fruit_veg_con", var_labels = Fruit_veg_con_labels)
+```
+  
+The possible values reported in the documentation are:  
+- "1": Less than 5 times a day  
+- "2": 5-10 times a day  
+- "3": More than 10 times a day  
+As we can see in the above plot, the values are not coded.   
+I will assume that the values are just the answer given to the question: How much fruits and vegetables do you consume daily?  
+Thus, I'll map each value to the right category:  
+
+```{r}
+# fruit_veg_con has continuous values, so first I'll discretisize them
+health_df$Fruit_veg_con <- cut(health_df$Fruit_veg_con,
+                        breaks = c(-Inf, 5, 10, Inf),
+                        labels = c(1, 2, 3),
+                        right = FALSE)
+
+# Converto in factor per chiarezza (opzionale ma consigliato)
+health_df$Fruit_veg_con <- factor(health_df$Fruit_veg_con,
+                           levels = c(1, 2, 3),
+                           labels = c("Less than 5/day", "5-10/day", "More than 10/day"))
+
+summary(health_df$Fruit_veg_con)
+```
+```{r}
+Fruit_veg_con_labels <- c(
+  "1" = "<5/day", "2" = "5-10/day", "3" = ">10/day",
+  "6" = "Valid skip", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Fruit_veg_con", var_labels = Fruit_veg_con_labels)
+```
+
+
+- Smoked:
+Number of cigarettes smoked daily by the respondent (daily smoker).
+```{r}
+Smoked_labels <- c(
+  "996" = "Valid skip", "997" = "Don't know", "998" = "Refusal", "999" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Smoked", var_labels = Smoked_labels)
+```
+Here, the values are correctly reported as in the documentation. 
+
+```{r}
+health_df$Smoked <- ifelse(health_df$Smoked %in% c(996, 997, 998, 999), 0, health_df$Smoked)
+
+```
+
+```{r}
+hist(health_df$Smoked, breaks = 30, main = "Daily distribution of cigarettes", xlab = "Cigarettes per day")
+
+```
+We assume that those who reported "Valid skip", "Don't know", "Refusal", "Not stated" are simply "Non smoker".
+```{r}
+health_df$Smoked[is.na(health_df$Smoked)] <- 0
+health_df$Smoked <- cut(health_df$Smoked,
+                     breaks = c(-Inf, 0, 5, 10, 20, 30, Inf),
+                     labels = c("Non smoker", "1-5/day", "6-10/day", "11-20/day", "21-30/day", ">30/day"),
+                     right = TRUE)
+
+plot_Mood_disorder_distribution(health_df, "Smoked", var_labels = Smoked_labels)
+```
+
+
+
+- Tobaco_use:
+Use of alternative tobacco products such as chewing tobacco, pinch, or snuff within the last 30 days.
+```{r}
+Tobaco_use_labels <- c(
+  "1" = "Yes", "2" = "No", "6" = "Valid skip", "7" = "Don't know",
+  "8" = "Refusal", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Tobaco_use", var_labels = Tobaco_use_labels)
+```
+
+```{r}
+health_df$Tobaco_use <- ifelse(health_df$Tobaco_use == 1, 0,
+                        ifelse(health_df$Tobaco_use == 2, 1, NA))
+health_df$Tobaco_use <- factor(health_df$Tobaco_use, levels = c(0, 1), labels = c("Smoker", "Non-Smoker"))
+
+summary(health_df$Tobaco_use)
+```
+
+
+- weekly_alcohol:
+Indicates whether the respondent has consumed any alcoholic beverage in the past 12 months.
+```{r}
+weekly_alcohol_labels <- c(
+  "1" = "Yes", "2" = "No", "6" = "Valid skip", "7" = "Don't know",
+  "8" = "Refusal", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "weekly_alcohol", var_labels = weekly_alcohol_labels )
+```
+Here, again, we have raw values as in fruit_veg_con.  
+The documentation simply says that this variable should tell if someone either drink or not.
+
+```{r}
+health_df$weekly_alcohol <- cut(
+  health_df$weekly_alcohol,
+  breaks = c(-Inf, 0, Inf),
+  labels = c("Non drinker", "Drinks"),
+  right = TRUE  
+)
+
+plot_Mood_disorder_distribution(health_df, "weekly_alcohol", var_labels = weekly_alcohol_labels )
+
+summary(health_df$weekly_alcohol)
+```
+
+
+- Cannabies_use:
+Indicates whether the respondent has used cannabis in the past 12 months for medical or non-medical reasons.
+```{r}
+Cannabies_use_labels <- c(
+  "1" = "Non-medical", "2" = "Medical", "3" = "Both",
+  "6" = "Valid skip", "7" = "Don't know", "8" = "Refusal", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Cannabies_use", var_labels = Cannabies_use_labels )
+```
+
+```{r}
+health_df$Cannabies_use[health_df$Cannabies_use %in% c(6, 7, 8, 9)] <- NA
+
+health_df$Cannabies_use <- factor(health_df$Cannabies_use,
+  levels = c(1, 2),
+  labels = c("Non-medical", "Medical")
+)
+summary(health_df$Cannabies_use)
+```
+
+- Drug_use:
+Indicates whether the respondent has used any illicit drugs in the past 12 months.
+```{r}
+Drug_use_labels <- c(
+  "1" = "Used", "2" = "Not used", "6" = "Valid skip", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Drug_use", var_labels = Drug_use_labels )
+```
+
+```{r}
+health_df$Drug_use <- ifelse(health_df$Drug_use == 1, 0,
+                        ifelse(health_df$Drug_use == 2, 1, NA))
+health_df$Drug_use <- factor(health_df$Drug_use, levels = c(0, 1), labels = c("Drug user", "Non-user"))
+
+summary(health_df$Drug_use)
+```
+ 
+ 
+## Physical Activity & Body Metrics
+ 
+- Weight_state:
+This indicates the self-perceived weight.
+```{r}
+Weight_state_labels <- c(
+  "1" = "Overweight", "2" = "Underweight", "3" = "Just about right",
+  "6" = "Valid skip", "7" = "Don't know", "8" = "Refusal", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Weight_state", var_labels = Weight_state_labels)
+```
+
+```{r}
+health_df$Weight_state[health_df$Weight_state %in% c(6, 7, 8, 9)] <- NA
+
+health_df$Weight_state <- factor(health_df$Weight_state,
+  levels = c(1, 2, 3),
+  labels = c("Overweight", "Underweight", "Just about right")
+)
+summary(health_df$Weight_state)
+```
+
+- BMI_12_17:
+Body Mass Index (BMI) for individuals aged 12 to 17 years, self-reported. 
+```{r}
+BMI_12_17_labels <- c(
+  "1" = "Thinness/Normal", "2" = "Overweight/Obese",
+  "6" = "Valid skip", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "BMI_12_17", var_labels = BMI_12_17_labels)
+```
+
+```{r}
+health_df$BMI_12_17[health_df$BMI_12_17 %in% c(6, 9)] <- NA
+
+health_df$BMI_12_17 <- factor(health_df$BMI_12_17,
+                                  levels = c(1, 2),
+                                  labels = c("Thinness", "Overweight"))
+
+plot_Mood_disorder_distribution(health_df, "BMI_12_17", var_labels = BMI_12_17_labels)
+```
+
+
+- BMI_18_above:
+Body Mass Index (BMI) for individuals aged 18+, self-reported. 
+```{r}
+BMI_18_above_labels <- c(
+  "1" = "Underweight/Normal", "2" = "Overweight/Obese",
+  "6" = "Valid skip", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "BMI_18_above", var_labels = BMI_18_above_labels)
+```
+
+
+```{r}
+health_df$BMI_18_above[health_df$BMI_18_above %in% c(6, 9)] <- NA
+
+health_df$BMI_18_above <- factor(health_df$BMI_18_above,
+  levels = c(1, 2),
+  labels = c("Underweight", "Overweight")
+)
+summary(health_df$BMI_18_above)
+```
+
+
+- Total_active_time:
+Represents the total number of hours spent in active transportation over the past 7 days, considering only those lasting at least 10 minutes at a time.
+```{r}
+Total_active_time_labels <- c(
+  "99996" = "Valid skip", "99997" = "Don't know", "99999898" = "Refusal", "99999" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Total_active_time", var_labels = Total_active_time_labels )
+```
+
+For this variable, the unit value is minutes. The documentation says that it should be hours, but I'll keep them as minutes so I can classify them by the WHO guidelines.
+
+```{r}
+health_df$Total_active_time <- ifelse(health_df$Total_active_time %in% c(99996, 99997, 99998, 99999),
+                                       NA,
+                                       health_df$Total_active_time)
+health_df$Total_active_time <- health_df$Total_active_time 
+summary(health_df$Total_active_time)
+```
+
+```{r}
+hist(health_df$Total_active_time, breaks = 30, main = "Daily distribution of active time", xlab = "Active time", na.rm = TRUE)
+```
+Levels are classified according to WHO guidelines:  
+- Inactive: 0 minutes  
+- Insufficiently active: 1–149 minutes   
+- Sufficiently active: 150+ minutes  
+```{r}
+health_df$Total_active_time <- cut(health_df$Total_active_time,
+                             breaks = c(-Inf, 0, 149, Inf),
+                             labels = c("Inactive", "Insufficiently active", "Sufficiently active"),
+                             right = TRUE)
+
+plot_Mood_disorder_distribution(health_df, "Total_active_time", var_labels = Total_active_time_labels )
+```
+
+
+- Total_physical_act_time:
+Represents the total time (in the past 7 days) the respondent spent on sports, fitness, or recreational physical activities—organized or non-organized—that lasted at least 10 continuous minutes per session (i.e. walking, home or gym exercise, swimming, cycling, running, skiing, dancing and all team sports).
+```{r}
+Total_physical_act_time_labels <- c(
+  "99996" = "Valid skip", "99997" = "Don't know", "99999898" = "Refusal", "99999" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Total_physical_act_time", var_labels = Total_physical_act_time_labels )
+```
+```{r}
+table(health_df$Total_physical_act_time)
+```
+
+These are raw data. Thus, I'll convert Total_physical_act_time from 10-minute units to total minutes and then classify the levels according to WHO guidelines.
+```{r}
+health_df$Total_physical_act_time <- ifelse(health_df$Total_physical_act_time %in% c(9996, 9997, 9998, 9999),
+                                             NA,
+                                             health_df$Total_physical_act_time)
+health_df$Total_physical_act_time <- health_df$Total_physical_act_time
+
+health_df$Total_physical_act_time <- cut(health_df$Total_physical_act_time,
+                                       breaks = c(-Inf, 0, 149, Inf),
+                                       labels = c("Inactive", "Insufficiently active", "Sufficiently active"),
+                                       right = TRUE)
+
+plot_Mood_disorder_distribution(health_df, "Total_physical_act_time", var_labels = Total_physical_act_time_labels )
+```
+
+
+- Other_physical_act_time:
+
+```{r}
+Other_physical_act_time_labels <- c(
+  "99996" = "Valid skip", "99997" = "Don't know", "99998" = "Refusal", "99999" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Other_physical_act_time", var_labels = Other_physical_act_time_labels )
+```
+
+```{r}
+table(health_df$Other_physical_act_time)
+```
+
+The unit value for Other_physical_act_time has not been reported in the documentation.  
+Thus, I'll assume that the values are expressed in minutes and proceed as I did for the previous variables.
+
+```{r}
+health_df$Other_physical_act_time <- ifelse(health_df$Other_physical_act_time %in% c(99996, 99998, 99999),
+                                             NA,
+                                             health_df$Other_physical_act_time)
+health_df$Other_physical_act_time <- health_df$Other_physical_act_time 
+
+health_df$Other_physical_act_time <- cut(health_df$Other_physical_act_time,
+                                       breaks = c(-Inf, 0, 149, Inf),
+                                       labels = c("Inactive", "Insufficiently active", "Sufficiently active"),
+                                       right = TRUE)
+
+plot_Mood_disorder_distribution(health_df, "Other_physical_act_time", var_labels = Other_physical_act_time_labels )
+```
+
+
+
+- Physical_vigorous_act_time:
+Represents the total number of minutes over the past 7 days that the respondent spent doing vigorous-intensity physical activities—those that cause heavy breathing or being out of breath.
+```{r}
+Physical_vigorous_act_time_labels <- c(
+  "99996" = "Valid skip", "99997" = "Don't know", "99999898" = "Refusal", "99999" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Physical_vigorous_act_time", var_labels = Physical_vigorous_act_time_labels )
+```
+```{r}
+table(health_df$Physical_vigorous_act_time)
+```
+
+
+Again, here I'll classify the levels according to WHO guidelines. 
+```{r}
+health_df$Physical_vigorous_act_time <- ifelse(health_df$Physical_vigorous_act_time %in% c(99996, 99998, 99999),
+                                             NA,
+                                             health_df$Physical_vigorous_act_time)
+health_df$Physical_vigorous_act_time <- health_df$Physical_vigorous_act_time 
+
+health_df$Physical_vigorous_act_time <- cut(health_df$Physical_vigorous_act_time,
+                                       breaks = c(-Inf, 0, 149, Inf),
+                                       labels = c("Inactive", "Insufficiently active", "Sufficiently active"),
+                                       right = TRUE)
+
+plot_Mood_disorder_distribution(health_df, "Physical_vigorous_act_time", var_labels = Physical_vigorous_act_time_labels )
+```
+
+
+- Work_hours:
+It indicates the total usual hours worked per week.
+```{r}
+Work_hours_labels <- c(
+  "96" = "Valid skip","99" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Work_hours", var_labels = Work_hours_labels )
+```
+```{r}
+health_df$Work_hours <- ifelse(health_df$Work_hours %in% c(96, 99),
+                                NA,
+                                health_df$Work_hours)
+
+```
+
+```{r}
+hist(health_df$Work_hours, na.rm = TRUE)
+```
+
+```{r}
+# Standardize Work_hours (mean=0, sd=1)
+health_df$Work_hours <- scale(health_df$Work_hours)
+hist(health_df$Work_hours, na.rm = TRUE)
+
+```
+
+
+
+## Health Outcomes & Utilities
+
+- Health_utility_indx:
+ Indicates the respondent’s overall health-related quality of life, measured using the Health Utilities Index (HUI).
+```{r}
+Health_utility_indx_labels <- c(
+  "1" = "HUI < 0.8", "2" = "HUI >= 0.8", "9" = "Not stated"
+)
+plot_Mood_disorder_distribution(health_df, "Health_utility_indx", var_labels = Health_utility_indx_labels)
+```
+
+```{r}
+health_df$Health_utility_indx[health_df$Health_utility_indx %in% c(9)] <- NA
+
+health_df$Health_utility_indx <- factor(health_df$Health_utility_indx,
+  levels = c(1, 2),
+  labels = c("HUI<0.8", "HUI>=0.8")
+)
+summary(health_df$Health_utility_indx)
+```
+
+# Final dataset
+
+
+This is the final cleaned dataset:
+```{r}
+head(health_df, 5)
+```
+
+
+
+```{r}
+summary(health_df) 
+```
+
+
+```{r}
+saveRDS(health_df, path)
+```
+
+
+
+

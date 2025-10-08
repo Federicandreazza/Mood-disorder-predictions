@@ -1,0 +1,927 @@
+---
+title: "SIL project"
+author: "Federica Andreazza"
+date: "May 2025"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    theme: spacelab
+  word_document:
+    toc: true
+  pdf_document:
+    toc: true
+subtitle: Predictions
+---
+
+This report presents predictive modeling for mood disorders using the cleaned **Healthcare Survey dataset**.  
+We explore several classification algorithms (including logistic regression with stepwise selection, quadratic discriminant analysis, Naive Bayes, and Lasso regression) to identify key predictors and evaluate model performance.  
+The target variable is **`Mood_disorder`**.
+
+The cleaned Healthcare Survey dataset is loaded and prepared for modeling: 
+```{r}
+health_df <- readRDS(path)
+summary(health_df,5)
+```
+As we can see, the dataset has many missing data. 
+
+# Preprocessing
+
+Before initializing the models and evaluating their predictions, it is essential to subject the dataset to a preprocessing phase to prepare it adequately for the subsequent modeling steps.
+
+First, let's clean the dataset by removing all rows containing missing values (NaNs) using the `na.omit()` function.
+```{r}
+health_df_clean <- na.omit(health_df)
+
+health_df_clean
+```
+However, as we can see, the resulting dataset is empty, indicating that every row contains at least one missing value.
+
+Therefore, we filter the dataset by retaining only the columns where less than 30% of the values are missing to ensure data quality. 
+```{r}
+na_threshold <- 0.3
+health_df_filtered <- health_df[, colMeans(is.na(health_df)) < na_threshold]
+head(health_df_filtered, 10)
+```
+
+
+Remaining missing values are handled by removing incomplete cases, resulting in a dataset suitable for predictive modeling.
+```{r}
+health_df_filtered <- na.omit(health_df_filtered)
+nrow(health_df_filtered)
+ncol(health_df_filtered)
+```
+After preprocessing, the dataset contains 55150 observations and 37 variables.  
+
+To properly assess model performance, it is necessary to estimate prediction error on a test set. Since only this dataset is available, we'll split it into training and testing subsets using an 80-20 split.
+The variable `Mood_disorder` is the target in this project's models.
+```{r}
+set.seed(123)
+
+# Split the original dataset into training and test sets
+n <- nrow(health_df_filtered)
+train_idx <- sample(seq_len(n), size = floor(0.8 * n))
+
+df_train <- health_df_filtered[train_idx, ]
+df_test  <- health_df_filtered[-train_idx, ]
+
+# Create matrix X and vector y for Lasso from the entire dataset
+X <- model.matrix(Mood_disorder ~ ., data = health_df_filtered)[, -1]  # remove intercept
+y <- health_df_filtered$Mood_disorder
+
+# Split X and y consistently
+X_train <- X[train_idx, ]
+y_train <- y[train_idx]
+X_test  <- X[-train_idx, ]
+y_test  <- y[-train_idx]
+
+```
+
+
+
+----------------------------------------------
+
+# Logistic regression
+
+A logistic regression model is fit using all predictors in the training set to predict mood disorder status.
+
+```{r}
+full_logit <- glm(Mood_disorder ~ ., data = df_train, family = binomial)
+summary(full_logit)
+```
+As we can see from the summary of this model, mental health state and anxiety disorder status are among the strongest predictors.  
+Meanwhile, variables such as household type, some age groups (65+), general health states, life satisfaction, and some physical activity variables show weaker or no significant association.  
+  
+  
+Next, we evaluate the model's performance on the test set using the **predict** function. Before doing so, it is useful to calculate the accuracy on the training set to compare it with the test accuracy and identify any potential _overfitting_.
+```{r}
+train_full_logit.probs <- predict(full_logit, newdata = df_train, type = "response")
+
+```
+
+The agreement between predictions and observed survival data is conveniently summarized with a confusion matrix. Below I assign a person to the class "has mood disorder" if the estimated probability of mood disorder is larger than 0.5:
+```{r}
+train_full_preds50 <- train_full_logit.probs > 0.5
+table(preds = train_full_preds50, true = df_train$Mood_disorder)
+```
+
+The accuracy of the full logistic regression classifier with the 50% threshold, considering the train set, is:
+```{r}
+train_full_preds <- factor(ifelse(train_full_preds50, "Yes", "No"), levels = levels(df_train$Mood_disorder))
+
+
+train_full_accuracy <- mean(train_full_preds == df_train$Mood_disorder)
+print(train_full_accuracy)
+```
+
+vs test set:
+
+```{r}
+test_full_logit.probs <- predict(full_logit, newdata = df_test, type = "response")
+```
+
+```{r}
+test_full_preds50 <- test_full_logit.probs > 0.5
+table(preds = test_full_preds50, true = df_test$Mood_disorder)
+```
+
+```{r}
+test_full_preds <- factor(ifelse(test_full_preds50, "Yes", "No"), levels = levels(df_test$Mood_disorder))
+
+# Now calculate accuracy correctly
+test_full_logit_accuracy <- mean(test_full_preds == df_test$Mood_disorder)
+print(test_full_logit_accuracy)
+```
+
+There is minimal difference between the training accuracy (93.39%) and the test accuracy (93.43%), suggesting that the model generalizes well and does not exhibit signs of overfitting.  
+
+
+The ROC curve can be computed with package **pROC**:
+
+```{r}
+library(pROC)
+full_logit.roc <- roc(df_test$Mood_disorder ~ test_full_logit.probs, plot = TRUE, print.auc = TRUE)
+```
+  
+The AUC for the full logistic regression is `0.879`. 
+
+ 
+This full model provides a baseline for further comparisons.  
+
+----------------------------------------------
+
+The dataset contains 38 variables, which is a relatively large number to include simultaneously in a single model.  
+Therefore, I attempt to obtain a subset of predictors through stepwise regression, using two different approaches:  
+- the first employs `regsubsets()` with forward, backward, and bidirectional selection methods; 
+- the second uses the `stepAIC()` function.
+
+## Stepwise regression using regsubsets()
+
+Stepwise selection using AIC will be performed in forward, backward, and bidirectional directions to identify a parsimonious model.  
+
+Let's start first with forward selection:
+```{r}
+library(leaps)
+regfit.fwd <- regsubsets(Mood_disorder ~ ., data = df_train, nvmax = 19, method = "forward")
+summary(regfit.fwd)
+```
+
+Now backward elimination:
+```{r}
+regfit.bwd <- regsubsets(Mood_disorder ~ ., data = df_train, nvmax = 19, method = "backward")
+summary(regfit.bwd)
+```
+
+Finally, bidirectional elimination also known as “sequential replacement”:
+```{r}
+regfit.bdir <- regsubsets(Mood_disorder ~ ., data = df_train, nvmax = 19, method = "seqrep")
+summary(regfit.bdir)
+```
+
+
+```{r}
+par(mfrow = c(1, 3))
+plot(summary(regfit.fwd)$cp, xlab = "Number of Variables", ylab = "Cp", type = 'l')
+best.cp <- which.min(summary(regfit.fwd)$cp)
+points(best.cp, summary(regfit.fwd)$cp[best.cp], col = "red", cex = 2, pch = 20)
+
+plot(summary(regfit.bwd)$cp, xlab = "Number of Variables", ylab = "Cp", type = 'l')
+best.cp <- which.min(summary(regfit.bwd)$cp)
+points(best.cp, summary(regfit.bwd)$cp[best.cp], col = "red", cex = 2, pch = 20)
+
+plot(summary(regfit.bdir)$cp, xlab = "Number of Variables", ylab = "Cp", type = 'l')
+best.cp <- which.min(summary(regfit.bdir)$cp)
+points(best.cp, summary(regfit.bdir)$cp[best.cp], col = "red", cex = 2, pch = 20)
+```
+
+I note that the Mallows' $C_p$ (analogous to AIC) indicates better model fit with 20 variables, and in the bidirectional method, there are two jumps for the models with 10 and 16 predictors.
+Consequently, I'll construct models with both 10 and 20 variables selected via `regsubsets()`.
+
+
+Let's select the best model with 10 predictors from each of the three stepwise methods implemented in `regsubsets()`: 
+```{r}
+coef(regfit.fwd, 10)
+```
+
+```{r}
+coef(regfit.bwd, 10)
+```
+
+```{r}
+coef(regfit.bdir, 10)
+```
+
+Observe that the estimated coefficients are consistent across the three methods.
+
+
+
+So, first consider logistic regression of **Mood_disorder** using the above 10 predictors: 
+```{r}
+logit_10 <- glm(Mood_disorder ~ Gender + Mental_health_state + Stress_level + Total_income + Anxiety_disorder + High_BP + Respiratory_chronic_con + Pain_status + Total_active_time, data = df_train, family = binomial)
+
+summary(logit_10)
+```
+Overall, the model suggests that mood disorders are more likely among females, individuals with poorer mental health, higher stress, lower income, presence of anxiety disorder, respiratory chronic conditions, and pain. Physical activity appears to have a protective effect when sufficient.  
+
+And evaluate multicollinearity among predictors using the Variance Inflation Factor (VIF):
+```{r}
+vif_values <- car::vif(logit_10)
+print(vif_values)
+```
+All VIF values are close to 1, indicating no significant multicollinearity.  
+
+
+Now, let's look at the best model with 20 predictors from each of the three stepwise methods:
+```{r}
+coef(regfit.fwd, 20)
+```
+
+```{r}
+coef(regfit.bwd, 20)
+```
+
+```{r}
+coef(regfit.bdir, 20)
+```
+Note that the third one has slightly different coefficients and predictors (i.e. there's a difference in the `Food_security` levels selected. The first model (forward) and the third one (bidirectional) include "Moderately" and "Severely", while the backward includes "Marginally" and "Severely").  
+
+However, for the fitting of the logistic regression models, I consider all the levels of each predictors.
+```{r}
+logit_20 <- glm(Mood_disorder ~ Gender + Marital_status + Age + Edu_level + Gen_health_state + Mental_health_state + Stress_level + Sleep_apnea + High_BP + Anxiety_disorder + Respiratory_chronic_con + Musculoskeletal_con + Pain_status + Total_active_time + Food_security + Income_source + Total_income, data = df_train, family = binomial)
+
+summary(logit_20)
+```
+Some variables, such as age 65+, insufficient physical activity, and certain income brackets, did not reach statistical significance, suggesting their effects may be less pronounced or require further investigation.
+
+Evaluate multicollinearity among predictors using the Variance Inflation Factor (VIF):
+```{r}
+vif_values <- car::vif(logit_20)
+print(vif_values)
+```
+The results indicate no significant multicollinearity. 
+
+Now, we decide which model is better:
+
+```{r}
+AIC(logit_10)
+```
+```{r}
+AIC(logit_20)
+```
+The AIC suggests to take the model logit_20 as the "final" model.
+**Effect plots** for **logit_20**:
+
+```{r, fig.width=26, fig.height=30, message=FALSE, warning=FALSE}
+library(effects)
+
+plot(allEffects(logit_20), ylab = "Mood disorder", rescale.axis = FALSE)
+
+```
+
+The effect plots reveal meaningful coefficient effects. For example, the probability of mood disorder increases with higher stress levels.
+
+
+```{r}
+train_logit.probs <- predict(logit_20, newdata = df_train, type = "response")
+
+```
+
+Confusion matrix:
+```{r}
+train_preds50 <- train_logit.probs > 0.5
+table(preds = train_preds50, true = df_train$Mood_disorder)
+```
+
+The accuracy of the logistic regression classifier with the 50% threshold, considering the train set, is:
+```{r}
+train_preds_factor <- factor(ifelse(train_preds50, "Yes", "No"), levels = levels(df_train$Mood_disorder))
+
+
+train_accuracy <- mean(train_preds_factor == df_train$Mood_disorder)
+print(train_accuracy)
+```
+
+vs test set:
+
+```{r}
+test_logit.probs <- predict(logit_20, newdata = df_test, type = "response")
+```
+
+```{r}
+test_preds50 <- test_logit.probs > 0.5
+table(preds = test_preds50, true = df_test$Mood_disorder)
+```
+
+```{r}
+test_preds_factor <- factor(ifelse(test_preds50, "Yes", "No"), levels = levels(df_test$Mood_disorder))
+
+# Now calculate accuracy correctly
+test_accuracy_logit <- mean(test_preds_factor == df_test$Mood_disorder)
+print(test_accuracy_logit)
+```
+
+There's little difference between the train accuracy and the test accuracy, indicating that the model is not overfitting.
+
+```{r}
+library(pROC)
+logit_20.roc <- roc(df_test$Mood_disorder ~ test_logit.probs, plot = TRUE, print.auc = TRUE)
+```
+  
+The AUC for this logistic regression is `0.874`. 
+
+---------------------------------------------------------------------------
+
+## Prediction intervals
+Now, we'll compute prediction intervals for the probability of mood disorder.
+Let's assume we want to estimate the **95% prediction interval** for a woman who presumably works for a large company and is in the early stages of her career after completing a PhD. She eats healthily, exercises regularly, and has no physical health problems. However, she does experience some mental health issues related to work conditions and relationship difficulties.
+```{r}
+newdata = data.frame(
+               Gender = "Female",
+               Marital_status = "Single",
+               Age = "35-49 yr", 
+               Edu_level = "Post-secondary",
+               Gen_health_state = "Good",
+               Mental_health_state = "Fair",
+               Stress_level = "Extremely",
+               Sleep_apnea = "No",
+               High_BP = "No",
+               Anxiety_disorder = "Yes",
+               Respiratory_chronic_con = "No",
+               Musculoskeletal_con = "No",  
+               Pain_status = "Pain",
+               Total_active_time = "Sufficiently active",
+               Food_security = "Food secure",
+               Income_source = "Wages/self-employment",
+               Total_income = "$20-40K"
+             )
+p1 <- predict(logit_20,  newdata = newdata, se.fit = TRUE)
+## 95% prediction interval on the log-odds scale:
+lo1 <- p1$fit - qnorm(0.975) * p1$se.fit
+up1 <- p1$fit + qnorm(0.975) * p1$se.fit
+## inverse logit function:
+invlogit <- function(x) exp(x) / (1 + exp(x))
+## prediction interval on the probability scale: 
+invlogit(c(lo1, up1))
+```
+
+
+Now consider the same situation, but instead of a woman we have a man:
+```{r}
+newdata = data.frame(
+               Gender = "Male",
+               Marital_status = "Single",
+               Age = "35-49 yr", 
+               Edu_level = "Post-secondary",
+               Gen_health_state = "Good",
+               Mental_health_state = "Fair",
+               Stress_level = "Extremely",
+               Sleep_apnea = "No",
+               High_BP = "No",
+               Anxiety_disorder = "Yes",
+               Respiratory_chronic_con = "No",
+               Musculoskeletal_con = "No",  
+               Pain_status = "Pain",
+               Total_active_time = "Sufficiently active",
+               Food_security = "Food secure",
+               Income_source = "Wages/self-employment",
+               Total_income = "$20-40K"
+             )
+p1 <- predict(logit_20,  newdata = newdata, se.fit = TRUE)
+## 95% prediction interval on the log-odds scale:
+lo1 <- p1$fit - qnorm(0.975) * p1$se.fit
+up1 <- p1$fit + qnorm(0.975) * p1$se.fit
+## inverse logit function:
+invlogit <- function(x) exp(x) / (1 + exp(x))
+## prediction interval on the probability scale: 
+invlogit(c(lo1, up1))
+```
+The comparison of the prediction intervals highlights the difference in the chance to have a mood disorder between different genders (i.e. female and male).
+
+
+Here are some more examples:
+
+For this example, we consider an average young adult who has just completed secondary school. He is currently unemployed, does not engage in sports activities, and has asthma.
+```{r}
+newdata = data.frame(
+               Gender = "Male",
+               Marital_status = "Single",
+               Age = "18-34 yr", 
+               Edu_level = "Secondary school",
+               Gen_health_state = "Fair",
+               Mental_health_state = "Good",
+               Stress_level = "A bit",
+               Sleep_apnea = "No",
+               High_BP = "No",
+               Anxiety_disorder = "Yes",
+               Respiratory_chronic_con = "Yes",
+               Musculoskeletal_con = "No",  
+               Pain_status = "No pain",
+               Total_active_time = "Inactive",
+               Food_security = "Food secure",
+               Income_source = "Other",
+               Total_income = "<$20K"
+             )
+p1 <- predict(logit_20,  newdata = newdata, se.fit = TRUE)
+## 95% prediction interval on the log-odds scale:
+lo1 <- p1$fit - qnorm(0.975) * p1$se.fit
+up1 <- p1$fit + qnorm(0.975) * p1$se.fit
+## inverse logit function:
+invlogit <- function(x) exp(x) / (1 + exp(x))
+## prediction interval on the probability scale: 
+invlogit(c(lo1, up1))
+```
+
+
+As another example, we estimate the predicted probability of mood disorder for the lady in the first example while varying the stress level:
+```{r}
+newdata = data.frame(
+               Gender = "Female",
+               Marital_status = "Single",
+               Age = "35-49 yr", 
+               Edu_level = "Post-secondary",
+               Gen_health_state = "Good",
+               Mental_health_state = "Fair",
+               Stress_level = factor(levels(df_train$Stress_level)),
+               Sleep_apnea = "No",
+               High_BP = "No",
+               Anxiety_disorder = "Yes",
+               Respiratory_chronic_con = "No",
+               Musculoskeletal_con = "No",  
+               Pain_status = "Pain",
+               Total_active_time = "Sufficiently active",
+               Food_security = "Food secure",
+               Income_source = "Wages/self-employment",
+               Total_income = "$20-40K"
+             )
+p1 <- predict(logit_20,  newdata = newdata, se.fit = TRUE)
+## 95% prediction interval on the log-odds scale:
+newdata$fit <- p1$fit
+newdata$lower <- p1$fit - qnorm(0.975) * p1$se.fit
+newdata$upper <- p1$fit + qnorm(0.975) * p1$se.fit
+ 
+## inverse logit function:
+invlogit <- function(x) exp(x) / (1 + exp(x))
+## prediction interval on the probability scale: 
+invlogit(c(lo1, up1))
+
+newdata <- transform(newdata,
+                     fit_prob = invlogit(fit),
+                     lower_prob = invlogit(lower),
+                     upper_prob = invlogit(upper))
+
+library(ggplot2) 
+ggplot(newdata, aes(x = Stress_level, y = fit_prob)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower_prob, ymax = upper_prob), width = 0.2) +
+  labs(title = "Predicted Probability of Mood Disorder by Stress Level",
+       y = "Predicted Probability (95% CI)", x = "Stress Level") +
+  theme_minimal()
+```
+  
+This visualization helps to understand how increasing stress levels are associated with changes in the risk of mood disorder.  
+These intervals help quantify the uncertainty in individual risk estimates, which is important for clinical decision-making.  
+
+---------------------------------------------------------
+
+# Stepwise regression using stepAIC()
+
+This second approach implements stepwise selection using stepAIC().
+Function step works also with generalized linear models differently from regsubsets that is designed for linear models only. 
+
+I start with the full logistic regression model that includes all the predictors and then I apply stepwise regression to idetify which predictors are mostly relevant. Below I consider 'bidirectional elimination’ using function `stepAIC()`:
+```{r}
+library(MASS)
+
+# Fit full logistic regression model on the training set
+full_model <- glm(Mood_disorder ~ ., data = df_train, family = binomial)
+
+# Stepwise selection (both directions) based on AIC
+step_model <- stepAIC(full_model, direction = "both", trace = FALSE)
+
+# Summary of the final model
+summary(step_model)
+
+
+```
+Some variables, such as “Sense_belonging strong,” “Weight_state underweight,” and “Fruit and vegetable consumption 5-10/day,” were not statistically significant, suggesting limited influence in this model.  
+
+
+I will now test the model using the unseen data of test set.
+```{r}
+# Predictions on the test set
+test_step.probs <- predict(step_model, newdata = df_test, type = "response")
+test_preds50 <- test_step.probs > 0.5
+table(preds = test_preds50, true = df_test$Mood_disorder)
+
+test_preds_factor <- factor(ifelse(test_preds50, "Yes", "No"), levels = levels(df_test$Mood_disorder))
+
+
+# Calculate accuracy
+test_accuracy_step <- mean(test_preds_factor == df_test$Mood_disorder)
+print(test_accuracy_step)
+```
+
+
+```{r}
+logit_step.roc <- roc(df_test$Mood_disorder ~ test_step.probs, plot = TRUE, print.auc = TRUE)
+
+```
+  
+The AUC for this logistic regression using stepAIC is `0.879`. 
+
+
+
+```{r}
+AIC(full_logit, logit_20, step_model)
+```
+AIC values for the full, 20-predictor, and stepwise logistic regression models indicate that the stepwise model (AIC = 16642.54) fits the data best.  
+
+--------------------------------------------------------------------------
+
+# Lasso regression 
+
+Finally, I explore Lasso regression on the training set as an alternative variable selection and regularization method.
+```{r}
+library(glmnet)
+y_train_num <- ifelse(y_train == "Yes", 1, 0)
+y_test_num <- ifelse(y_test == "Yes", 1, 0)
+
+```
+
+
+Consider the lasso applied to the training data:
+```{r}
+lasso.mod <- glmnet(X, y, alpha = 1, family = "binomial")
+## lasso path plot:
+plot(lasso.mod)
+```
+
+
+As λ increases (moving left to right), more coefficients shrink toward zero, demonstrating how Lasso performs variable selection by retaining only the most important predictors at higher levels of regularization.
+
+```{r}
+summary(lasso.mod)
+```
+
+
+The value of **λ** selected via cross-validation is:
+```{r}
+set.seed(1)
+cv.lasso <- cv.glmnet(X_train, y_train_num, alpha = 1, nfolds = 5, family = binomial)
+
+best.lambda <- cv.lasso$lambda.min
+best.lambda
+
+```
+
+
+```{r}
+plot(cv.lasso)
+abline(v = log(best.lambda), lty = "dashed")
+```
+
+This plot shows the cross-validated deviance as a function of log(λ). The vertical dashed lines indicate the λ values that minimize the deviance and the largest λ within one standard error of the minimum.  
+
+Path plot of the lasso estimates as a function of best λ on the logarithm scale:
+```{r}
+plot(lasso.mod, xvar = "lambda") 
+abline(v = log(best.lambda), lwd = 1.2, lty = "dashed")
+
+```
+
+
+The lasso solution corresponding to the selected value of λ is:
+```{r}
+coef(cv.lasso, s = best.lambda)
+```
+
+This model highlights poor mental health, female gender, and food insecurity as strong risk factors for mood disorder.  
+Positive coefficients, such as for poor mental health, female gender, and food insecurity, indicate a higher risk, while negative coefficients, such as for absence of anxiety or sleep apnea, are associated with a lower risk.
+
+Finally, the predictive performance is evaluated on the test set:
+```{r}
+lasso.pred <- predict(lasso.mod, s = best.lambda, newx = X_test, type="response")
+
+```
+
+Accuracy:
+```{r}
+pred_class <- ifelse(lasso.pred > 0.5, 1, 0)
+
+test_accuracy_lasso <- mean(pred_class == y_test_num)
+print(paste("Accuracy:", test_accuracy_lasso))
+
+```
+
+
+ROC curve:
+```{r}
+lasso.roc <- roc(y_test_num, as.vector(lasso.pred), plot = TRUE, print.auc = TRUE)
+```
+ 
+The AUC for the Lasso regression is `0.881`.  
+
+
+  
+---------------------------------------------------------------------
+
+# Quadratic Discriminant Analysis
+ 
+We fit a model using the 20 coefficients found by regsubsets():
+
+Since function `qda()` does not take as input factor predictors, I'll now create dummy variables. 
+
+
+```{r}
+reg_summary <- summary(regfit.bdir)
+
+# Select model with minimum BIC
+best_model_size <- which.min(reg_summary$cp)
+
+# Get selected variables (logical vector)
+selected_vars_logical <- reg_summary$which[best_model_size, ]
+
+# Get names of selected variables (excluding intercept)
+selected_vars <- names(selected_vars_logical[selected_vars_logical])[-1]
+selected_vars <- make.names(selected_vars)
+selected_vars
+```
+
+
+```{r}
+df_train_dummy <- as.data.frame(X_train)
+df_train_dummy$Mood_disorder <- y_train
+colnames(df_train_dummy) <- make.names(colnames(df_train_dummy))
+
+df_test_dummy <- as.data.frame(X_test)
+df_test_dummy$Mood_disorder <- y_test
+colnames(df_test_dummy) <- make.names(colnames(df_test_dummy))
+```
+
+
+Quadratic discriminant analysis:
+
+```{r}
+library("MASS")
+
+qda.fit <- qda(Mood_disorder ~ GenderFemale + Marital_statusSingle + Age50.64.yr + Edu_levelPost.secondary + Edu_levelSecondary.school + Mental_health_stateVery.good + Mental_health_stateGood + Mental_health_stateFair + Mental_health_statePoor + BMI_18_aboveOverweight + Sleep_apneaNo + Fatigue_syndromeNo + Anxiety_disorderNo + Respiratory_chronic_conNo + Health_utility_indxHUI..0.8 + Cannabies_useMedical + ImmigrantNon.immigrant + Food_securityMarginally.insecure + Food_securityModerately.insecure + Food_securitySeverely.insecure, data = df_train_dummy)
+qda.fit
+```
+The QDA model classifies individuals based on differences in group means and covariance structures.  
+The group means highlight that mood disorder cases are associated with higher rates of female gender, single marital status, poor or fair mental health, and greater food insecurity, compared to non-cases.  
+These findings suggest that mood disorder is linked to a combination of demographic, health, and socioeconomic factors.
+  
+Prediction:
+
+```{r}
+qda.preds <- predict(qda.fit, newdata = df_test_dummy, type = "response")
+```
+
+
+```{r}
+table(preds = qda.preds$class, true = df_test$Mood_disorder)
+```
+
+Accuracy:
+```{r}
+test_accuracy_qda = mean(qda.preds$class == df_test$Mood_disorder)
+test_accuracy_qda
+```
+
+ROC curve:
+```{r}
+qda_probs <- qda.preds$posterior[, "Yes"] 
+qda.roc <- roc(df_test$Mood_disorder ~ qda_probs, plot = TRUE, print.auc = TRUE)
+```
+  
+The AUC for the Quadratic Discriminant Analysis is `0.856`. 
+
+---------------------------------------------------------------------------
+
+# Naive Bayes
+
+For testing this model, we first fit a full model as a baseline. Then, we will fit another (smaller) model using the 20 variables selected by regsubsets().
+
+```{r}
+library("e1071")
+nb_full.fit <- naiveBayes(Mood_disorder ~ ., data = df_train,  type = "class")
+nb_full.fit
+```
+
+The model shows that mood disorder is associated with higher proportions of female gender, single marital status, poor or fair mental health, and food insecurity.  
+For example, individuals with mood disorder are more likely to be female (68% vs. 54% in non-cases), single (54% vs. 41%), and report poor mental health (9% vs. 0.4%).  
+Food insecurity is also more common among those with mood disorder.  
+In contrast, factors such as better health utility, absence of anxiety, and medical cannabis use are less prevalent in the mood disorder group.   
+These findings highlight the complex interplay of multiple risk factors in mood disorder.
+
+Predictions:
+```{r}
+nb_full.preds <- predict(nb_full.fit, newdata = df_test, type = "class")
+```
+
+
+```{r}
+table(preds = nb_full.preds, true = df_test$Mood_disorder)
+```
+
+Accuracy:
+```{r}
+test_full_nb_accuracy = mean(nb_full.preds == df_test$Mood_disorder)
+test_full_nb_accuracy
+```
+ROC curve:
+```{r}
+nb_full.preds <- predict(nb_full.fit, newdata = df_test, type = "raw")
+nb_full_probs <- nb_full.preds[, "Yes"]
+nb_full.roc <- roc(df_test$Mood_disorder ~ nb_full_probs, plot = TRUE, print.auc = TRUE)
+```
+
+The AUC for the full Naive Bayes is `0.853`.
+
+Now, let's evaluate a Naive Bayes model using always the same set of 20 variables from regsubsets():
+```{r}
+library("e1071")
+nb.fit <- naiveBayes(Mood_disorder ~ Gender + Marital_status + Age + Edu_level + Gen_health_state + Mental_health_state + Stress_level + Sleep_apnea + High_BP + Anxiety_disorder + Respiratory_chronic_con + Musculoskeletal_con + Pain_status + Total_active_time + Food_security + Income_source + Total_income, data = df_train,  type = "class")
+nb.fit
+```
+
+The Naive Bayes model highlights key risk factors for mood disorders, including female gender, single marital status, higher stress levels, and poorer mental health states. It effectively captures class-conditional probabilities despite assuming predictor independence.   
+The two Naive Bayes outputs are very similar in terms of the main findings and the approach. The key risk factors for mood disorder are consistent across both, with the main difference being the number of variables included in each analysis.  
+The interpretation of the results is therefore the same: mood disorder is associated with female gender, single status, poor mental health, and food insecurity, while absence of anxiety and better health are protective.
+
+Predictions:
+```{r}
+nb.preds <- predict(nb.fit, newdata = df_test, type = "class")
+```
+
+
+```{r}
+table(preds = nb.preds, true = df_test$Mood_disorder)
+```
+
+Accuracy:
+```{r}
+test_accuracy_nb = mean(nb.preds == df_test$Mood_disorder)
+test_accuracy_nb
+```
+ROC curve:
+```{r}
+nb.preds <- predict(nb.fit, newdata = df_test, type = "raw")
+nb_probs <- nb.preds[, "Yes"]
+nb.roc <- roc(df_test$Mood_disorder ~ nb_probs, plot = TRUE, print.auc = TRUE)
+
+```
+  
+The AUC for the Naive Bayes is `0.864`. 
+
+
+
+------------------------------------------------------------------------
+
+# KNN
+
+As a final classification approach, we apply the k-Nearest Neighbors (k-NN) algorithm to predict mood disorder status. This non-parametric method classifies each test observation based on the majority class among its k closest neighbors in the training set.  
+Perform k-NN classification with k = 5 neighbors:
+```{r}
+library("class")
+set.seed(98765)
+
+k= 5
+
+knn.pred <- knn(train = X_train, test = X_test, cl = df_train$Mood_disorder, k = k)
+
+```
+
+Confusion matrix of predictions vs true labels:
+```{r}
+
+table(preds = knn.pred, true = df_test$Mood_disorder)
+
+```
+
+Calculate and print accuracy:
+```{r}
+test_accuracy_knn <- mean(knn.pred == df_train$Mood_disorder)
+print(paste("Accuracy:", test_accuracy_knn))
+```
+
+To identify the optimal number of neighbors, we evaluate accuracy across k values from 1 to 20:
+```{r}
+rates <- double(20)
+for (i in 1:20) {
+  tmp <- knn(train = X_train, test = X_test, cl = df_train$Mood_disorder, k = i)
+  rates[i] <- mean(tmp == df_train$Mood_disorder)
+}
+plot(x = (1:20), y = rates, xlab = "k", ylab = "Accuracy", type = "l")
+```
+
+Finally, we identify and report the k value that maximizes accuracy along with the corresponding accuracy:
+```{r}
+optim_k <- which.max(rates)
+max_accuracy <- max(rates)
+
+cat("Optimal k:", optim_k, "\n")
+cat("Maximum accuracy:", max_accuracy, "\n")
+```
+
+```{r}
+knn.pred <- knn(train = X_train, test = X_test, cl = df_train$Mood_disorder, k = optim_k, prob=TRUE)
+table(preds = knn.pred, true = df_test$Mood_disorder)
+```
+
+```{r}
+test_accuracy_knn <- mean(knn.pred == df_test$Mood_disorder)
+print(paste("Accuracy:", test_accuracy_knn))
+```
+
+
+```{r}
+knn.probs <- ifelse(knn.pred == "Yes", attr(knn.pred, "prob"), 1 - attr(knn.pred, "prob"))
+knn.roc <- roc(df_test$Mood_disorder ~ knn.probs, plot = TRUE, print.auc = TRUE)
+
+```
+The AUC for the Naive Bayes is `0.812`.
+
+# Conclusions
+
+Comparison of the accuracies obtained by each model:
+
+```{r}
+# Create named vector of accuracies
+accuracies <- c( 
+  "Logistic Regression baseline" = test_full_logit_accuracy,
+  "Logistic Regression (20 coeffs regsubsets)" = test_accuracy_logit,
+  "Logistic Regression (stepAIC)" = test_accuracy_step,
+  "Quadratic Discriminant Analysis" = test_accuracy_qda,
+  "Nave Bayes baseline" = test_full_nb_accuracy,
+  "Naive Bayes" = test_accuracy_nb,
+  "Lasso Shrinkage" = test_accuracy_lasso,
+  "K-Nearest-Neighbor" = max_accuracy
+)
+
+# Convert to data frame preserving names as a column
+accuracy_df <- data.frame(
+  Model = names(accuracies),
+  Accuracy = round(as.numeric(accuracies), 4),
+  row.names = NULL
+)
+
+accuracy_df
+
+```
+
+
+Function **coords** with option ret = “all” returns many summary measures of the classifier.
+We now see comparisons among different models:
+
+```{r}
+coords(full_logit.roc, x = "best", ret = "all")
+```
+
+
+```{r}
+coords(logit_20.roc, x = "best", ret = "all")
+```
+
+
+```{r}
+coords(logit_step.roc, x = "best", ret = "all")
+```
+
+
+```{r}
+coords(qda.roc, x = "best", ret = "all")
+```
+
+
+```{r}
+coords(nb_full.roc, x = "best", ret = "all")
+```
+
+
+```{r}
+coords(nb.roc, x = "best", ret = "all")
+```
+
+
+```{r}
+coords(lasso.roc, x = "best", ret = "all")
+```
+
+
+```{r}
+coords(knn.roc, x = "best", ret = "all")
+```
+
+Overall, the **logistic regression** models (including full, reduced, and stepwise versions) consistently achieve the best balance between sensitivity, specificity, and accuracy, with higher sensitivity and similar or lower false positive rates compared to other methods. The stepwise version using `stepAIC()` achieves a lower AIC compared to the other logistic methods.   
+The **Lasso** model stands out for its high specificity and precision, making it particularly effective at reducing false positives while maintaining good sensitivity and accuracy.   
+**QDA** demonstrates the highest sensitivity but also the highest false positive rate, resulting in lower overall accuracy and precision.   
+**Naive Bayes** models show moderate performance, with reasonable sensitivity but lower precision and higher false positive rates than logistic and Lasso models.   
+The **KNN** model, while achieving respectable accuracy and specificity, has lower sensitivity and higher false positives than the top-performing models, and its precision remains modest due to the high number of false positives.    
+In summary, logistic regression and Lasso models offer the most robust and balanced performance for mood disorder prediction in this dataset.  
+
+The analysis confirms that poor mental health status and anxiety disorder are the most powerful predictors of mood disorder.  
+Socioeconomic factors such as food insecurity and lower income also play a significant role.   
+The model’s strong predictive performance suggests it could be useful for identifying high-risk individuals in healthcare settings.   
+However, these findings also emphasize the need for integrated mental health and social support services. Limitations include the cross-sectional nature of the data, which prevents causal conclusions.
